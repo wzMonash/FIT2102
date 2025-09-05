@@ -24,7 +24,10 @@ import {
     scan,
     switchMap,
     take,
-    merge
+    merge,
+    timer,
+    from,
+    mergeMap
 } from "rxjs";
 import { fromFetch } from "rxjs/fetch";
 
@@ -42,8 +45,9 @@ const Birb = {
 
 const Constants = {
     PIPE_WIDTH: 50,
+    PIPE_SPEED: 2,
     TICK_RATE_MS: 20, // Might need to change this!
-    GRAVITY: 0.5,
+    GRAVITY: 0.7,
     MAX_VY: 7,
 } as const;
 
@@ -57,13 +61,28 @@ type State = Readonly<{
     gameEnd: boolean,
     birdY: number,
     birdVy: number,
+    pipes: ReadonlyArray<Pipe>,
+    exit: ReadonlyArray<string>,
+    nextPipeId: number,
+    lives: number,
 }>;
 
 const initialState: State = {
     gameEnd: false,
     birdY: Viewport.CANVAS_HEIGHT / 2 - Birb.HEIGHT / 2,
     birdVy: 0,
+    pipes: [],
+    exit: [],
+    nextPipeId: 0,
+    lives: 3,
 };
+
+type Pipe = Readonly<{
+    id: string,
+    x: number,
+    gapY: number,
+    gapH: number,
+}>;
 
 /**
  * Updates the state by proceeding with one time step.
@@ -153,6 +172,27 @@ const render = (): ((s: State) => void) => {
         height: `${Birb.HEIGHT}`,
     });
     svg.appendChild(birdImg);
+    
+    const createPipe = (id: string) => {
+        const g = createSvgElement(svg.namespaceURI, "g", { id }) as SVGGElement;
+        const top = createSvgElement(svg.namespaceURI, "rect", {
+                                                                "data-part": "top",
+                                                                x: `${Viewport.CANVAS_WIDTH}`,
+                                                                y: "0",
+                                                                width: `${Constants.PIPE_WIDTH}`,
+                                                                fill: "green"
+                                                            });
+        const bottom = createSvgElement(svg.namespaceURI, "rect", {
+                                                                    "data-part": "bottom",
+                                                                    x: `${Viewport.CANVAS_WIDTH}`,
+                                                                    width: `${Constants.PIPE_WIDTH}`,
+                                                                    fill: "green"
+                                                                });
+        g.appendChild(top);
+        g.appendChild(bottom);
+        svg.appendChild(g);
+        return g;
+    }
 
     // // Draw a static pipe as a demonstration
     // const pipeGapY = 200; // vertical center of the gap
@@ -180,9 +220,20 @@ const render = (): ((s: State) => void) => {
     // svg.appendChild(pipeBottom);
     return (s: State) => {
         birdImg.setAttribute("y", `${s.birdY - Birb.HEIGHT / 2}`)
-    }
-        
-        
+
+        for (const p of s.pipes) {
+            const g = (document.getElementById(p.id) as SVGGElement) ?? createPipe(p.id);
+            const top = g.querySelector('rect[data-part="top"]');
+            const bottom = g.querySelector('rect[data-part="bottom"]');
+
+            top?.setAttribute("x", String(p.x));
+            top?.setAttribute("height", `${p.gapY - p.gapH / 2}`);
+
+            bottom?.setAttribute("x", String(p.x));
+            bottom?.setAttribute("y", `${p.gapY + p.gapH / 2}`);
+            bottom?.setAttribute("height", `${Viewport.CANVAS_HEIGHT - (p.gapY + p.gapH / 2)}`);
+        }
+    }   
 };
 
 export const state$ = (csvContents: string): Observable<State> => {
@@ -208,15 +259,60 @@ export const state$ = (csvContents: string): Observable<State> => {
             const clampedVy = Math.min(Constants.MAX_VY, vy);
             const y = s.birdY + vy;
 
+            const movePipes = s.pipes.map(p => ({
+                ...p,
+                x: p.x - Constants.PIPE_SPEED,
+            }))
+            const removePipes: ReadonlyArray<string> = movePipes.filter(p => (p.x + Constants.PIPE_WIDTH < 0)).map(p => p.id);;
+            const keepPipes: ReadonlyArray<Pipe> = movePipes.filter(p => (p.x + Constants.PIPE_WIDTH > 0))
+
             return {
                 ...s,
                 birdVy: clampedVy,
                 birdY: y,
+                pipes: keepPipes,
+                exit: removePipes,
             }
         })
     );
 
-    return merge(flap$, tick$).pipe(
+    const parseMap = (csv: string) => {
+        return csv
+        .split(/\r?\n/)
+        .map(line => line.split(","))
+        .slice(1)   // remove header
+        .map(([gapY, gapH, time]) => ({
+            gapY: Number(gapY) * Viewport.CANVAS_HEIGHT,
+            gapH: Number(gapH) * Viewport.CANVAS_HEIGHT,
+            time: Number(time) * 1000,
+        }))
+    }
+
+    const pipes = parseMap(csvContents);
+
+    const pipes$ = from(pipes).pipe(
+        mergeMap(({gapY, gapH, time}) => 
+            timer(time).pipe(
+                map(_ => (s: State): State => {
+                    const id = `pipe-${s.nextPipeId}`
+                    const p: Pipe = {
+                        id: id,
+                        x: Viewport.CANVAS_WIDTH,
+                        gapY: gapY,
+                        gapH: gapH,
+                    }
+
+                    return {
+                        ...s,
+                        nextPipeId: s.nextPipeId + 1,
+                        pipes: s.pipes.concat(p),
+                    }
+                })
+            )
+        )
+    )
+
+    return merge(flap$, tick$, pipes$).pipe(
         scan((state, reducerFn) => reducerFn(state), initialState)
     )
 };
