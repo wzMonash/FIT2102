@@ -41,12 +41,12 @@ const Viewport = {
 const Birb = {
     WIDTH: 42,
     HEIGHT: 30,
-    CX: Viewport.CANVAS_WIDTH * 0.3, // centre x pos of birb
+    CX: (Viewport.CANVAS_WIDTH * 0.3), // centre x pos of birb
 } as const;
 
 const Constants = {
     PIPE_WIDTH: 50,
-    PIPE_SPEED: 2,
+    PIPE_SPEED: 5,
     TICK_RATE_MS: 20, // Might need to change this!
     GRAVITY: 0.7,
     MAX_VY: 7,
@@ -65,9 +65,9 @@ type State = Readonly<{
     birdY: number,
     birdVy: number,
     pipes: ReadonlyArray<Pipe>,
-    nextPipeId: number,
     lives: number,
     invincibility: number,
+    score: number,
 }>;
 
 const initialState: State = {
@@ -75,9 +75,9 @@ const initialState: State = {
     birdY: Viewport.CANVAS_HEIGHT / 2 - Birb.HEIGHT / 2,
     birdVy: 0,
     pipes: [],
-    nextPipeId: 0,
     lives: 3,
-    invincibility: 0
+    invincibility: 0,
+    score: 0,
 };
 
 type Pipe = Readonly<{
@@ -237,6 +237,11 @@ const render = (): ((s: State) => void) => {
         })
 
         livesText.textContent = `${s.lives}`;
+        scoreText.textContent = `${s.score}`;
+
+        if(s.gameEnd === true) {
+            show(gameOver);
+        }
     }   
 };
 
@@ -294,21 +299,26 @@ export const state$ = (csvContents: string): Observable<State> => {
     /** Determines the rate of time steps */
     const tick$ = createRngStreamFromSource(interval(Constants.TICK_RATE_MS))(Constants.SEED).pipe(
         map(rand => (s: State) => {
+            // new state attributes to pass if no special event happens
             const vy = s.birdVy + Constants.GRAVITY;
             const clampedVy = Math.min(Constants.MAX_VY, vy);
             const y = s.birdY + vy;
 
+            // simulate pipe moving to left
             const movePipes = s.pipes.map(p => ({
                 ...p,
                 x: p.x - Constants.PIPE_SPEED,
             }))
-            const keepPipes: ReadonlyArray<Pipe> = movePipes.filter(p => (p.x + Constants.PIPE_WIDTH > 0))
+
+            // Determines which pipes to keep, pipes that moved to the left of the screen are removed
+            const keepPipes: ReadonlyArray<Pipe> = movePipes.filter(p => (p.x + Constants.PIPE_WIDTH > 0));
 
             const bounceDown = 4 + 3 * rand
             const bounceUp = -4 + 3 * rand
             const newInv = Math.max(0, s.invincibility - Constants.TICK_RATE_MS); // Update invincibility duration
             const isInvincible = newInv > 0;
 
+            // Helper function for determining how to update state when birb collides with an object
             const collided = (bounce: number) => {
                 const newY = s.birdY + bounce;
                 return{
@@ -318,14 +328,17 @@ export const state$ = (csvContents: string): Observable<State> => {
                     pipes: keepPipes,
                     lives: isInvincible ? s.lives : Math.max(0, s.lives - 1),
                     invincibility: isInvincible? newInv : Constants.INVINCIBILITY_TIME,
+                    gameEnd: s.lives === 0,
                 }   
             };
 
+            // determines the collision box of the birb
             const birbTop = s.birdY - (Birb.HEIGHT / 2);
             const birbBottom = s.birdY + (Birb.HEIGHT / 2);
             const birbLeft = Birb.CX - (Birb.WIDTH / 2);
             const birbRight = Birb.CX + (Birb.WIDTH / 2);
 
+            // collision logic for birb with pipe
             const handleCollisions = keepPipes.some(
                 p => {
                     const pipeLeft = p.x;
@@ -341,8 +354,35 @@ export const state$ = (csvContents: string): Observable<State> => {
 
             if (s.birdY >= (Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2)) return collided(bounceUp); // hit bottom edge
             if (s.birdY <= (0 + Birb.HEIGHT / 2)) return collided(bounceDown); // hit top edge
-            if (handleCollisions) return (s.birdVy > 0 ? collided(bounceUp) : collided(bounceDown))
+            if (handleCollisions) return (s.birdVy > 0 ? collided(bounceUp) : collided(bounceDown)) // collide with pipe
 
+            const passPipe = keepPipes.some(
+                p => {
+                    const prevRight = p.x + Constants.PIPE_WIDTH;
+                    const nextRight = (p.x - Constants.PIPE_SPEED) + Constants.PIPE_WIDTH;
+                    return (Birb.CX <= prevRight && Birb.CX > nextRight);
+                }
+            )
+
+            // Score increment when passing one pipe
+            if (passPipe) return {
+                ...s,
+                birdVy: clampedVy,
+                birdY: y,
+                pipes: keepPipes,
+                invincibility: newInv,
+                score: s.score + 1,
+            }
+
+            const numOfPipes = csvContents.split(/\r?\n/).slice(1).length;
+            if (s.score === numOfPipes) {
+                return {
+                    ...s,
+                    gameEnd: true,
+                }
+            }
+
+            // update state normally when no special event
             return {
                 ...s,
                 birdVy: clampedVy,
@@ -379,7 +419,6 @@ export const state$ = (csvContents: string): Observable<State> => {
 
                     return {
                         ...s,
-                        nextPipeId: s.nextPipeId + 1,
                         pipes: s.pipes.concat(p),
                     }
                 })
@@ -388,7 +427,7 @@ export const state$ = (csvContents: string): Observable<State> => {
     )
 
     return merge(flap$, tick$, pipes$).pipe(
-        scan((state, reducerFn) => reducerFn(state), initialState)
+        scan((state, reducerFn) => state.gameEnd ? state : reducerFn(state), initialState)
     )
 };
 
