@@ -49,6 +49,8 @@ const Constants = {
     TICK_RATE_MS: 20, // Might need to change this!
     GRAVITY: 0.7,
     MAX_VY: 7,
+    SEED: 1234,
+    INVINCIBILITY_TIME: 3000,
 } as const;
 
 // User input
@@ -65,6 +67,7 @@ type State = Readonly<{
     exit: ReadonlyArray<string>,
     nextPipeId: number,
     lives: number,
+    invincibility: number,
 }>;
 
 const initialState: State = {
@@ -75,6 +78,7 @@ const initialState: State = {
     exit: [],
     nextPipeId: 0,
     lives: 3,
+    invincibility: 0
 };
 
 type Pipe = Readonly<{
@@ -219,7 +223,9 @@ const render = (): ((s: State) => void) => {
     // svg.appendChild(pipeTop);
     // svg.appendChild(pipeBottom);
     return (s: State) => {
-        birdImg.setAttribute("y", `${s.birdY - Birb.HEIGHT / 2}`)
+        const invincibleEffect = (Math.floor(s.invincibility / 100) % 2 ? "0.4" : "1"); // Give birb a blinking effect
+        birdImg.setAttribute("y", `${s.birdY - Birb.HEIGHT / 2}`);
+        birdImg.setAttribute("opacity", s.invincibility > 0 ? invincibleEffect : "1");
 
         for (const p of s.pipes) {
             const g = (document.getElementById(p.id) as SVGGElement) ?? createPipe(p.id);
@@ -233,6 +239,8 @@ const render = (): ((s: State) => void) => {
             bottom?.setAttribute("y", `${p.gapY + p.gapH / 2}`);
             bottom?.setAttribute("height", `${Viewport.CANVAS_HEIGHT - (p.gapY + p.gapH / 2)}`);
         }
+
+        livesText.textContent = `${s.lives}`;
     }   
 };
 
@@ -252,9 +260,44 @@ export const state$ = (csvContents: string): Observable<State> => {
         })
     )
 
+    /**
+     * A random number generator which provides two pure functions
+     * `hash` and `scale`. Call `hash` repeatedly to generate the
+     * sequence of hashes.
+     * 
+     * THIS CODE WAS TAKEN FROM APPLIED 4
+     */
+    abstract class RNG {
+        private static m = 0x80000000; // 2^31
+        private static a = 1103515245;
+        private static c = 12345;
+
+        public static hash = (seed: number): number =>
+            (RNG.a * seed + RNG.c) % RNG.m;
+
+        public static scale = (hash: number): number =>
+            (2 * hash) / (RNG.m - 1) - 1; // in [-1, 1]
+    }
+
+    /**
+     * THIS CODE WAS FROM APPLIED 4 EXERCISE 1
+     */
+    function createRngStreamFromSource<T>(source$: Observable<T>) {
+        return function createRngStream(
+            seed: number = 0,
+        ): Observable<number> {
+            const randomNumberStream = source$.pipe(
+                scan((acc) => RNG.hash(acc), seed),
+                map(RNG.scale)
+            );
+
+            return randomNumberStream;
+        };
+    }
+
     /** Determines the rate of time steps */
-    const tick$ = interval(Constants.TICK_RATE_MS).pipe(
-        map(_ => (s: State) => {
+    const tick$ = createRngStreamFromSource(interval(Constants.TICK_RATE_MS))(Constants.SEED).pipe(
+        map(rand => (s: State) => {
             const vy = s.birdVy + Constants.GRAVITY;
             const clampedVy = Math.min(Constants.MAX_VY, vy);
             const y = s.birdY + vy;
@@ -266,12 +309,33 @@ export const state$ = (csvContents: string): Observable<State> => {
             const removePipes: ReadonlyArray<string> = movePipes.filter(p => (p.x + Constants.PIPE_WIDTH < 0)).map(p => p.id);;
             const keepPipes: ReadonlyArray<Pipe> = movePipes.filter(p => (p.x + Constants.PIPE_WIDTH > 0))
 
+            const bounceDown = 4 + 3 * rand
+            const bounceUp = -4 + 3 * rand
+            const newInv = Math.max(0, s.invincibility - Constants.TICK_RATE_MS); // Update invincibility duration
+            const isInvincible = newInv > 0;
+
+            const hitEdge = (bounce: number) => {
+                return{
+                    ...s,
+                    birdVy: bounce,
+                    birdY: y,
+                    pipes: keepPipes,
+                    exit: removePipes,
+                    lives: isInvincible ? s.lives : Math.max(0, s.lives - 1),
+                    invincibility: isInvincible? newInv : Constants.INVINCIBILITY_TIME,
+                }   
+            };
+
+            if (s.birdY >= (Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2)) return hitEdge(bounceUp); // hit bottom edge
+            if (s.birdY <= (0 + Birb.HEIGHT / 2)) return hitEdge(bounceDown); // hit top edge
+
             return {
                 ...s,
                 birdVy: clampedVy,
                 birdY: y,
                 pipes: keepPipes,
                 exit: removePipes,
+                invincibility: newInv,
             }
         })
     );
