@@ -65,7 +65,6 @@ type State = Readonly<{
     birdY: number,
     birdVy: number,
     pipes: ReadonlyArray<Pipe>,
-    exit: ReadonlyArray<string>,
     nextPipeId: number,
     lives: number,
     invincibility: number,
@@ -76,14 +75,12 @@ const initialState: State = {
     birdY: Viewport.CANVAS_HEIGHT / 2 - Birb.HEIGHT / 2,
     birdVy: 0,
     pipes: [],
-    exit: [],
     nextPipeId: 0,
     lives: 3,
     invincibility: 0
 };
 
 type Pipe = Readonly<{
-    id: string,
     x: number,
     gapY: number,
     gapH: number,
@@ -167,37 +164,6 @@ const render = (): ((s: State) => void) => {
      *
      * @param s Current state
      */
-    
-    // Add birb to the main grid canvas
-    const birdImg = createSvgElement(svg.namespaceURI, "image", {
-        href: "assets/birb.png",
-        x: `${Viewport.CANVAS_WIDTH * 0.3 - Birb.WIDTH / 2}`,
-        y: `${Viewport.CANVAS_HEIGHT / 2 - Birb.HEIGHT / 2}`,
-        width: `${Birb.WIDTH}`,
-        height: `${Birb.HEIGHT}`,
-    });
-    svg.appendChild(birdImg);
-    
-    const createPipe = (id: string) => {
-        const g = createSvgElement(svg.namespaceURI, "g", { id }) as SVGGElement;
-        const top = createSvgElement(svg.namespaceURI, "rect", {
-                                                                "data-part": "top",
-                                                                x: `${Viewport.CANVAS_WIDTH}`,
-                                                                y: "0",
-                                                                width: `${Constants.PIPE_WIDTH}`,
-                                                                fill: "green"
-                                                            });
-        const bottom = createSvgElement(svg.namespaceURI, "rect", {
-                                                                    "data-part": "bottom",
-                                                                    x: `${Viewport.CANVAS_WIDTH}`,
-                                                                    width: `${Constants.PIPE_WIDTH}`,
-                                                                    fill: "green"
-                                                                });
-        g.appendChild(top);
-        g.appendChild(bottom);
-        svg.appendChild(g);
-        return g;
-    }
 
     // // Draw a static pipe as a demonstration
     // const pipeGapY = 200; // vertical center of the gap
@@ -224,22 +190,51 @@ const render = (): ((s: State) => void) => {
     // svg.appendChild(pipeTop);
     // svg.appendChild(pipeBottom);
     return (s: State) => {
+        // Add birb to the main grid canvas
+        if (document.querySelector(".player")) {
+            document.querySelector(".player")!.remove();
+        }
+
+        const birdImg = createSvgElement(svg.namespaceURI, "image", {
+            class: "player",
+            href: "assets/birb.png",
+            x: `${Viewport.CANVAS_WIDTH * 0.3 - Birb.WIDTH / 2}`,
+            y: `${s.birdY}`,
+            width: `${Birb.WIDTH}`,
+            height: `${Birb.HEIGHT}`,
+        });
+        svg.appendChild(birdImg);
+
         const invincibleEffect = (Math.floor(s.invincibility / 100) % 2 ? "0.4" : "1"); // Give birb a blinking effect
         birdImg.setAttribute("y", `${s.birdY - Birb.HEIGHT / 2}`);
         birdImg.setAttribute("opacity", s.invincibility > 0 ? invincibleEffect : "1");
 
-        for (const p of s.pipes) {
-            const g = (document.getElementById(p.id) as SVGGElement) ?? createPipe(p.id);
-            const top = g.querySelector('rect[data-part="top"]');
-            const bottom = g.querySelector('rect[data-part="bottom"]');
 
-            top?.setAttribute("x", String(p.x));
-            top?.setAttribute("height", `${p.gapY - p.gapH / 2}`);
+        document.querySelectorAll(".pipes").forEach(pipe => pipe.remove());
+        
 
-            bottom?.setAttribute("x", String(p.x));
-            bottom?.setAttribute("y", `${p.gapY + p.gapH / 2}`);
-            bottom?.setAttribute("height", `${Viewport.CANVAS_HEIGHT - (p.gapY + p.gapH / 2)}`);
-        }
+        s.pipes.forEach(pipe => {
+            const pipeTop = createSvgElement(svg.namespaceURI, "rect", {
+                class: "pipes",
+                x: `${String(pipe.x)}`,
+                y: "0",
+                width: `${Constants.PIPE_WIDTH}`,
+                height: `${pipe.gapY - (pipe.gapH / 2)}`,
+                fill: "green",
+            })
+
+            const pipeBottom = createSvgElement(svg.namespaceURI, "rect", {
+                class: "pipes",
+                x: `${String(pipe.x)}`,
+                y: `${pipe.gapY + (pipe.gapH / 2)}`,
+                width: `${Constants.PIPE_WIDTH}`,
+                height: `${Viewport.CANVAS_HEIGHT - (pipe.gapY + (pipe.gapH / 2))}`,
+                fill: "green",
+            })
+
+            svg.appendChild(pipeTop);
+            svg.appendChild(pipeBottom);
+        })
 
         livesText.textContent = `${s.lives}`;
     }   
@@ -307,7 +302,6 @@ export const state$ = (csvContents: string): Observable<State> => {
                 ...p,
                 x: p.x - Constants.PIPE_SPEED,
             }))
-            const removePipes: ReadonlyArray<string> = movePipes.filter(p => (p.x + Constants.PIPE_WIDTH < 0)).map(p => p.id);;
             const keepPipes: ReadonlyArray<Pipe> = movePipes.filter(p => (p.x + Constants.PIPE_WIDTH > 0))
 
             const bounceDown = 4 + 3 * rand
@@ -322,7 +316,6 @@ export const state$ = (csvContents: string): Observable<State> => {
                     birdVy: bounce,
                     birdY: newY,
                     pipes: keepPipes,
-                    exit: removePipes,
                     lives: isInvincible ? s.lives : Math.max(0, s.lives - 1),
                     invincibility: isInvincible? newInv : Constants.INVINCIBILITY_TIME,
                 }   
@@ -355,7 +348,6 @@ export const state$ = (csvContents: string): Observable<State> => {
                 birdVy: clampedVy,
                 birdY: y,
                 pipes: keepPipes,
-                exit: removePipes,
                 invincibility: newInv,
             }
         })
@@ -379,9 +371,7 @@ export const state$ = (csvContents: string): Observable<State> => {
         mergeMap(({gapY, gapH, time}) => 
             timer(time).pipe(
                 map(_ => (s: State): State => {
-                    const id = `pipe-${s.nextPipeId}`
                     const p: Pipe = {
-                        id: id,
                         x: Viewport.CANVAS_WIDTH,
                         gapY: gapY,
                         gapH: gapH,
