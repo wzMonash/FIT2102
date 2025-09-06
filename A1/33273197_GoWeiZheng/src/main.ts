@@ -41,6 +41,7 @@ const Viewport = {
 const Birb = {
     WIDTH: 42,
     HEIGHT: 30,
+    CX: Viewport.CANVAS_WIDTH * 0.3, // centre x pos of birb
 } as const;
 
 const Constants = {
@@ -314,11 +315,12 @@ export const state$ = (csvContents: string): Observable<State> => {
             const newInv = Math.max(0, s.invincibility - Constants.TICK_RATE_MS); // Update invincibility duration
             const isInvincible = newInv > 0;
 
-            const hitEdge = (bounce: number) => {
+            const collided = (bounce: number) => {
+                const newY = s.birdY + bounce;
                 return{
                     ...s,
                     birdVy: bounce,
-                    birdY: y,
+                    birdY: newY,
                     pipes: keepPipes,
                     exit: removePipes,
                     lives: isInvincible ? s.lives : Math.max(0, s.lives - 1),
@@ -326,8 +328,27 @@ export const state$ = (csvContents: string): Observable<State> => {
                 }   
             };
 
-            if (s.birdY >= (Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2)) return hitEdge(bounceUp); // hit bottom edge
-            if (s.birdY <= (0 + Birb.HEIGHT / 2)) return hitEdge(bounceDown); // hit top edge
+            const birbTop = s.birdY - (Birb.HEIGHT / 2);
+            const birbBottom = s.birdY + (Birb.HEIGHT / 2);
+            const birbLeft = Birb.CX - (Birb.WIDTH / 2);
+            const birbRight = Birb.CX + (Birb.WIDTH / 2);
+
+            const handleCollisions = keepPipes.some(
+                p => {
+                    const pipeLeft = p.x;
+                    const pipeRight = p.x + Constants.PIPE_WIDTH;
+                    const gapTop = p.gapY - (p.gapH / 2);
+                    const gapBottom = p.gapY + (p.gapH / 2);
+
+                    const horizontal = (birbRight > pipeLeft) && (birbLeft < pipeRight);
+                    const vertical = (birbTop < gapTop) || (birbBottom > gapBottom);
+                    return horizontal && vertical;
+                }
+            )
+
+            if (s.birdY >= (Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2)) return collided(bounceUp); // hit bottom edge
+            if (s.birdY <= (0 + Birb.HEIGHT / 2)) return collided(bounceDown); // hit top edge
+            if (handleCollisions) return (s.birdVy > 0 ? collided(bounceUp) : collided(bounceDown))
 
             return {
                 ...s,
