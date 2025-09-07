@@ -27,7 +27,8 @@ import {
     merge,
     timer,
     from,
-    mergeMap
+    mergeMap,
+    startWith
 } from "rxjs";
 import { fromFetch } from "rxjs/fetch";
 
@@ -56,7 +57,7 @@ const Constants = {
 
 // User input
 
-type Key = "Space";
+type Key = "Space" | "KeyR";
 
 // State processing
 
@@ -239,8 +240,11 @@ const render = (): ((s: State) => void) => {
         livesText.textContent = `${s.lives}`;
         scoreText.textContent = `${s.score}`;
 
-        if(s.gameEnd === true) {
+        if(s.gameEnd) {
             show(gameOver);
+        }
+        else{
+            hide(gameOver);
         }
     }   
 };
@@ -321,14 +325,15 @@ export const state$ = (csvContents: string): Observable<State> => {
             // Helper function for determining how to update state when birb collides with an object
             const collided = (bounce: number) => {
                 const newY = s.birdY + bounce;
+                const newLives = isInvincible ? s.lives : Math.max(0, s.lives - 1);
                 return{
                     ...s,
                     birdVy: bounce,
                     birdY: newY,
                     pipes: keepPipes,
-                    lives: isInvincible ? s.lives : Math.max(0, s.lives - 1),
-                    invincibility: isInvincible? newInv : Constants.INVINCIBILITY_TIME,
-                    gameEnd: s.lives === 0,
+                    lives: newLives,
+                    invincibility: isInvincible ? newInv : Constants.INVINCIBILITY_TIME,
+                    gameEnd: newLives === 0,
                 }   
             };
 
@@ -426,9 +431,16 @@ export const state$ = (csvContents: string): Observable<State> => {
         )
     )
 
-    return merge(flap$, tick$, pipes$).pipe(
+    const game$ = merge(flap$, tick$, pipes$).pipe(
         scan((state, reducerFn) => state.gameEnd ? state : reducerFn(state), initialState)
-    )
+    )    
+
+    const restart$ = fromKey("KeyR").pipe(
+        startWith(null),
+        switchMap(_ => game$)
+    );
+
+    return restart$;
 };
 
 // The following simply runs your main function on window load.  Make sure to leave it in place.
