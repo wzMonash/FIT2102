@@ -165,37 +165,17 @@ const render = (): ((s: State) => void) => {
      *
      * @param s Current state
      */
-
-    // // Draw a static pipe as a demonstration
-    // const pipeGapY = 200; // vertical center of the gap
-    // const pipeGapHeight = 100;
-
-    // // Top pipe
-    // const pipeTop = createSvgElement(svg.namespaceURI, "rect", {
-    //     x: "150",
-    //     y: "0",
-    //     width: `${Constants.PIPE_WIDTH}`,
-    //     height: `${pipeGapY - pipeGapHeight / 2}`,
-    //     fill: "green",
-    // });
-
-    // // Bottom pipe
-    // const pipeBottom = createSvgElement(svg.namespaceURI, "rect", {
-    //     x: "150",
-    //     y: `${pipeGapY + pipeGapHeight / 2}`,
-    //     width: `${Constants.PIPE_WIDTH}`,
-    //     height: `${Viewport.CANVAS_HEIGHT - (pipeGapY + pipeGapHeight / 2)}`,
-    //     fill: "green",
-    // });
-
-    // svg.appendChild(pipeTop);
-    // svg.appendChild(pipeBottom);
     return (s: State) => {
         // Add birb to the main grid canvas
+
+        // Remove old birb element from previous frame
         if (document.querySelector(".player")) {
             document.querySelector(".player")!.remove();
         }
 
+        // Create new birb element of updated Y position
+        // Combining this with the remove logic, this creates
+        // an effect of the birb moving
         const birdImg = createSvgElement(svg.namespaceURI, "image", {
             class: "player",
             href: "assets/birb.png",
@@ -205,14 +185,15 @@ const render = (): ((s: State) => void) => {
             height: `${Birb.HEIGHT}`,
         });
         svg.appendChild(birdImg);
-
-        const invincibleEffect = (Math.floor(s.invincibility / 100) % 2 ? "0.4" : "1"); // Give birb a blinking effect
+        
+        // Value for giving birb a blinking effect
+        const invincibleEffect = (Math.floor(s.invincibility / 100) % 2 ? "0.4" : "1");
         birdImg.setAttribute("y", `${s.birdY - Birb.HEIGHT / 2}`);
+        // This is where the blinking effect happens
         birdImg.setAttribute("opacity", s.invincibility > 0 ? invincibleEffect : "1");
 
-
+        // Same logic for birb but this time handling multiple pipes at the same time
         document.querySelectorAll(".pipes").forEach(pipe => pipe.remove());
-        
 
         s.pipes.forEach(pipe => {
             const pipeTop = createSvgElement(svg.namespaceURI, "rect", {
@@ -361,6 +342,7 @@ export const state$ = (csvContents: string): Observable<State> => {
             if (s.birdY <= (0 + Birb.HEIGHT / 2)) return collided(bounceDown); // hit top edge
             if (handleCollisions) return (s.birdVy > 0 ? collided(bounceUp) : collided(bounceDown)) // collide with pipe
 
+            // Determines whether the birb has passed a pipe or not
             const passPipe = keepPipes.some(
                 p => {
                     const prevRight = p.x + Constants.PIPE_WIDTH;
@@ -379,6 +361,7 @@ export const state$ = (csvContents: string): Observable<State> => {
                 score: s.score + 1,
             }
 
+            // End the game when birb has passed through all the pipes
             const numOfPipes = csvContents.split(/\r?\n/).slice(1).length;
             if (s.score === numOfPipes) {
                 return {
@@ -398,6 +381,7 @@ export const state$ = (csvContents: string): Observable<State> => {
         })
     );
 
+    // function for parsing csv, outputs data for spawning pipes
     const parseMap = (csv: string) => {
         return csv
         .split(/\r?\n/)
@@ -410,8 +394,10 @@ export const state$ = (csvContents: string): Observable<State> => {
         }))
     }
 
+    // pipes' data
     const pipes = parseMap(csvContents);
 
+    // stream that update the state's pipes
     const pipes$ = from(pipes).pipe(
         mergeMap(({gapY, gapH, time}) => 
             timer(time).pipe(
@@ -431,12 +417,14 @@ export const state$ = (csvContents: string): Observable<State> => {
         )
     )
 
+    // merge all substream into one stream then update the states
     const game$ = merge(flap$, tick$, pipes$).pipe(
         scan((state, reducerFn) => state.gameEnd ? state : reducerFn(state), initialState)
     )    
 
+    // restarts the game
     const restart$ = fromKey("KeyR").pipe(
-        startWith(null),
+        startWith(null), // emit one value, this allows first game to run without R key inputs
         switchMap(_ => game$)
     );
 
