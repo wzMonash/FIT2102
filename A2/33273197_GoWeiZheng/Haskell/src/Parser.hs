@@ -268,6 +268,9 @@ inlineSpace = oneof "\t\r\f\v "
 inlineSpaces :: Parser String
 inlineSpaces = many inlineSpace
 
+inlineSpace1 :: Parser String
+inlineSpace1 = some inlineSpace
+
 -- | Write a function that parses the given string (fails otherwise).
 --
 -- /Hint/: Use 'is' and 'traverse'.
@@ -338,3 +341,9 @@ commaTok = charTok ','
 -- True
 stringTok :: String -> Parser String
 stringTok = tok . string
+
+sepBy1 :: Parser a -> Parser b -> Parser [a]
+sepBy1 p sep = (:) <$> p <*> many (sep *> p)
+
+between :: Parser open -> Parser close -> Parser a -> Parser a
+between open close p = open *> p <* close
