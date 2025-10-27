@@ -8,6 +8,8 @@ import Parser (
     commaTok, between, sepBy1
     )
 import Control.Applicative (many, some, (<|>))
+import Data.Char (toUpper)
+import Data.List (intercalate)
 
 data Grammar = Grammar [Rule]
     deriving (Show)
@@ -55,7 +57,7 @@ symbol =
     (Macro <$> macro)
 
 
-{- Helper parsers -}
+{- Part A Helper parsers -}
 
 nonTerminal :: Parser String
 nonTerminal = between (is '<') (is '>') $ do
@@ -69,8 +71,78 @@ terminal = between (is '"') (is '"') (many (isNot '"'))
 macro :: Parser String
 macro = between (is '[') (is ']') (some alpha)
 
+{- Part B helper functions -}
+
+capitalize :: String -> String
+capitalize (x:xs) = toUpper x : xs
+capitalize [] = []
+
+symbolToType :: Symbol -> String
+symbolToType (NonTerminal s) = capitalize s
+symbolToType (Terminal _) = "String" 
+symbolToType (Macro "int") = "Int"
+symbolToType (Macro _) = "String"   -- [alpha] or [newline]
+
+symbolParser :: Symbol -> String
+symbolParser (NonTerminal n) = n
+symbolParser (Terminal s)    = "(string \"" ++ s ++ "\")"
+symbolParser (Macro "int")   = "int"
+symbolParser (Macro _)       = "undefinedMacro"
+
+altToConstructor :: String -> Int -> Alternative -> String
+altToConstructor ruleName i (Alternative symbols) =
+    constructor ++ " " ++ unwords (map symbolToType symbols)    
+    where
+        constructor = capitalize ruleName ++ show i
+
+{-
+constructs the rhs of the production rule 
+unwords ["Term", "String", "Expression"] 
+-> "Term String Expression" (space between each element)
+-}
+
+ruleToData :: Rule -> String
+ruleToData (Rule name alts) = 
+    case alts of
+        [Alternative [s]] ->
+            "newtype " ++ capName ++ " = " ++ capName ++ " " ++ symbolToType s ++ "\n    deriving Show" -- One alternative and one field 
+        _ -> "data " ++ capName ++ " = " ++ intercalate ("\n" ++ (replicate l_lhs_data ' ') ++ "| ") (zipWith (altToConstructor name) [1..] alts) ++ "\n    deriving Show"
+    where
+        lhs_data        = "data " ++ capName ++ " "
+        l_lhs_data      = length lhs_data
+        capName         = capitalize name
+
+altToParser :: String -> Int -> Alternative -> String
+altToParser ruleName i (Alternative symbols) =
+    constructor ++ " <$> " ++ intercalate " <*> " (map symbolParser symbols)
+    where
+        constructor = capitalize ruleName ++ show i
+
+{-
+intercalate -> insert "something" between each element and return it as a string
+-}
+
+ruleToParser :: Rule -> String
+ruleToParser (Rule name [Alternative [s]]) =                -- If newtype, no numbered constructor
+    name ++ " :: Parser " ++ capName ++ "\n"
+    ++ name ++ " = " ++ capName ++ " <$> " ++ symbolParser s
+  where
+    capName = capitalize name
+
+ruleToParser (Rule name alts) =
+    name ++ " :: Parser " ++ capName ++ "\n"                -- data type, numbered constructor
+    ++ name ++ " = "
+    ++ intercalate ("\n" ++ (replicate (length name + 1) ' ') ++  "<|> ")
+        (zipWith (altToParser capName) [1..] alts)
+  where
+    capName = capitalize name
+
 generateHaskellCode :: ADT -> String
-generateHaskellCode _ = "-- But I cannot change the type of these three functions."
+generateHaskellCode (Grammar rules) =
+    typeDefs ++ "\n\n" ++ parserDefs ++ "\n"
+    where
+        typeDefs = intercalate "\n\n" (map ruleToData rules)
+        parserDefs = intercalate "\n\n" (map ruleToParser rules)
 
 validate :: ADT -> [String]
 validate _ = ["If i change these function types, I will get a 0 for correctness"]
